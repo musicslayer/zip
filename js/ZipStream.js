@@ -10,10 +10,13 @@ const SIG_EOCD = 0x06054b50;
 const SIG_ZIP64_EOCD = 0x06064B50;
 const SIG_ZIP64_EOCD_LOC = 0x07064B50;
 
+const ZIP64_MAGIC_SHORT = 0xffff;
+const ZIP64_MAGIC = 0xffffffff;
+const ZIP64_EXTRA_ID = 0x0001;
+
 // Use this to indicate that the checksum and size values will not be known when we write the local file header.
 const GENERAL_BIT_FLAG = 8;
 
-// TODO Reorder functions.
 // TODO Implement Extra field?
 
 class ZipStream {
@@ -81,27 +84,102 @@ class ZipStream {
         this._writeDataDescriptor(fileData);
     }
 
-    _writeCentralDirectoryEnd(size, offset) {
-        let records = this.fileDataArray.length;
-      
+    writeToStream(chunk) {
+        if(chunk) {
+            this.offset += chunk.length;
+        }
+
+        this.outputStream.write(chunk);
+    }
+
+    finish() {
+        // Write the final data for the zip file and then close the stream.
+        let centralOffset = this.offset;
+
+        for(let fileData of this.fileDataArray) {
+            this._writeCentralFileHeader(fileData);
+        }
+
+        let centralLength = this.offset - centralOffset;
+
+        this._writeCentralDirectoryEnd(centralLength, centralOffset);
+
+        this.outputStream.end();
+    }
+
+    _writeLocalFileHeader(fileData) {
         // signature
-        this.writeToStream(getLongBytes(SIG_EOCD));
+        this.writeToStream(getLongBytes(SIG_LFH));
       
-        // disk numbers (just use 0)
-        this.writeToStream(Buffer.alloc(2));
-        this.writeToStream(Buffer.alloc(2));
+        // version to extract and general bit flag
+        this.writeToStream(getShortBytes(fileData.minver));
+        this.writeToStream(getShortBytes(GENERAL_BIT_FLAG));
       
-        // number of entries
-        this.writeToStream(getShortBytes(records));
-        this.writeToStream(getShortBytes(records));
+        // compression method
+        this.writeToStream(getShortBytes(fileData.method));
       
-        // length and location of CD
-        this.writeToStream(getLongBytes(size));
-        this.writeToStream(getLongBytes(offset));
+        // datetime
+        this.writeToStream(getLongBytes(fileData.time));
       
-        // archive comment
-        this.writeToStream(getShortBytes(this.archiveComment.length));
-        this.writeToStream(this.archiveComment);
+        // crc32 checksum and sizes
+        // Use zeroes here and write the real values later.
+        this.writeToStream(Buffer.alloc(4));
+        this.writeToStream(Buffer.alloc(4));
+        this.writeToStream(Buffer.alloc(4));
+      
+        // name length
+        this.writeToStream(getShortBytes(fileData.name.length));
+      
+        // extra length
+        this.writeToStream(getShortBytes(fileData.extra.length));
+      
+        // name
+        this.writeToStream(fileData.name);
+      
+        // extra
+        this.writeToStream(fileData.extra);
+    }
+
+    async _writeLocalFileContent(filePath, fileData) {
+        // Create the stream pipeline that will stream data from the file into a zlib compressor and then into the zip file.
+
+        // Read file.
+        let inputStream = fs.createReadStream(filePath);
+        
+        // Intercept uncompressed data.
+        let contentPassThroughStream = new stream.PassThrough();
+        contentPassThroughStream.on("data", (chunk) => {
+            if(chunk) {
+                fileData.crc = crc32(chunk, fileData.crc);
+                fileData.size += chunk.length;
+            }
+        })
+
+        // Compress data with zlib
+        let compressedStream = zlib.createDeflateRaw({ level: this.compressionLevel });
+        
+        // Intercept compressed data.
+        let compressedPassThroughStream = new stream.PassThrough();
+        compressedPassThroughStream.on("data", (chunk) => {
+            if(chunk) {
+                fileData.csize += chunk.length;
+            }
+            this.writeToStream(chunk);
+        })
+
+        await stream.promises.pipeline(inputStream, contentPassThroughStream, compressedStream, compressedPassThroughStream);
+    }
+
+    _writeDataDescriptor(fileData) {
+        // signature
+        this.writeToStream(getLongBytes(SIG_DD));
+      
+        // crc32 checksum
+        this.writeToStream(getLongBytes(fileData.crc));
+      
+        // sizes
+        this.writeToStream(getLongBytes(fileData.csize));
+        this.writeToStream(getLongBytes(fileData.size));
     }
 
     _writeCentralFileHeader(fileData) {
@@ -159,108 +237,33 @@ class ZipStream {
         this.writeToStream(fileData.comment);
     }
 
-    _writeDataDescriptor(fileData) {
+    _writeCentralDirectoryEnd(size, offset) {
+        let records = this.fileDataArray.length;
+      
         // signature
-        this.writeToStream(getLongBytes(SIG_DD));
+        this.writeToStream(getLongBytes(SIG_EOCD));
       
-        // crc32 checksum
-        this.writeToStream(getLongBytes(fileData.crc));
+        // disk numbers (just use 0)
+        this.writeToStream(Buffer.alloc(2));
+        this.writeToStream(Buffer.alloc(2));
       
-        // sizes
-        this.writeToStream(getLongBytes(fileData.csize));
-        this.writeToStream(getLongBytes(fileData.size));
-    }
+        // number of entries
+        this.writeToStream(getShortBytes(records));
+        this.writeToStream(getShortBytes(records));
       
-    _writeLocalFileHeader(fileData) {
-        // signature
-        this.writeToStream(getLongBytes(SIG_LFH));
+        // length and location of CD
+        this.writeToStream(getLongBytes(size));
+        this.writeToStream(getLongBytes(offset));
       
-        // version to extract and general bit flag
-        this.writeToStream(getShortBytes(fileData.minver));
-        this.writeToStream(getShortBytes(GENERAL_BIT_FLAG));
-      
-        // compression method
-        this.writeToStream(getShortBytes(fileData.method));
-      
-        // datetime
-        this.writeToStream(getLongBytes(fileData.time));
-      
-        // crc32 checksum and sizes
-        // Use zeroes here and write the real values later.
-        this.writeToStream(Buffer.alloc(4));
-        this.writeToStream(Buffer.alloc(4));
-        this.writeToStream(Buffer.alloc(4));
-      
-        // name length
-        this.writeToStream(getShortBytes(fileData.name.length));
-      
-        // extra length
-        this.writeToStream(getShortBytes(fileData.extra.length));
-      
-        // name
-        this.writeToStream(fileData.name);
-      
-        // extra
-        this.writeToStream(fileData.extra);
-    }
-
-    writeToStream(chunk) {
-        if(chunk) {
-            this.offset += chunk.length;
-        }
-
-        this.outputStream.write(chunk);
-    }
-
-    finish() {
-        // Write the final data for the zip file and then close the stream.
-        let centralOffset = this.offset;
-
-        for(let fileData of this.fileDataArray) {
-            this._writeCentralFileHeader(fileData);
-        }
-
-        let centralLength = this.offset - centralOffset;
-
-        this._writeCentralDirectoryEnd(centralLength, centralOffset);
-
-        this.outputStream.end();
-    }
-
-    async _writeLocalFileContent(filePath, fileData) {
-        // Create the stream pipeline that will stream data from the file into a zlib compressor and then into the zip file.
-
-        // Read file.
-        let inputStream = fs.createReadStream(filePath);
-        
-        // Intercept uncompressed data.
-        let contentPassThroughStream = new stream.PassThrough();
-        contentPassThroughStream.on("data", (chunk) => {
-            if(chunk) {
-                fileData.crc = crc32(chunk, fileData.crc);
-                fileData.size += chunk.length;
-            }
-        })
-
-        // Compress data with zlib
-        let compressedStream = zlib.createDeflateRaw({ level: this.compressionLevel });
-        
-        // Intercept compressed data.
-        let compressedPassThroughStream = new stream.PassThrough();
-        compressedPassThroughStream.on("data", (chunk) => {
-            if(chunk) {
-                fileData.csize += chunk.length;
-            }
-            this.writeToStream(chunk);
-        })
-
-        await stream.promises.pipeline(inputStream, contentPassThroughStream, compressedStream, compressedPassThroughStream);
+        // archive comment
+        this.writeToStream(getShortBytes(this.archiveComment.length));
+        this.writeToStream(this.archiveComment);
     }
 }
 
 function dateToDos(d, forceLocalTime) {
     // Convert a Date object into a DOS time value.
-    // Note: "forceLocalTime" is needed because zip files have no concept of time zone,
+    // Note: "forceLocalTime" should be true for our usage because zip files have no concept of time zone,
     // so we need the time relative to the local time zone rather than GMT.
     let year = forceLocalTime ? d.getFullYear() : d.getUTCFullYear();
   
