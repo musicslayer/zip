@@ -14,10 +14,10 @@ const ZIP64_MAGIC_SHORT = 0xffff;
 const ZIP64_MAGIC = 0xffffffff;
 const ZIP64_EXTRA_ID = 0x0001;
 
-// Use this to indicate that the checksum and size values will not be known when we write the local file header.
-const GENERAL_BIT_FLAG = 8;
+const MIN_VERSION_ZIP64 = 45;
 
-// TODO Implement Extra field?
+// Indicates that the size, csize, and crc values will not be known by the time we are writing local file headers.
+const GENERAL_BIT_FLAG = 8;
 
 class ZipStream {
     fileDataArray = [];
@@ -46,21 +46,11 @@ class ZipStream {
         let stats = fs.lstatSync(filePath);
         let time = dateToDos(stats.mtime, true);
 
-        // For the extra, only add the ZIP64 entry if needed.
+        // For the extra, start with an empty buffer.
         let extra = Buffer.alloc(0);
 
         // For the comment, just use the empty string.
         let comment = "";
-
-        /*
-        let extra = Buffer.concat([
-            getShortBytes(constants.ZIP64_EXTRA_ID),
-            getShortBytes(24),
-            getEightBytes(ae.getSize()),
-            getEightBytes(ae.getCompressedSize()),
-            getEightBytes(offsets.file)
-          ], 28);
-        */
 
         let fileData = {
             name: name,
@@ -68,12 +58,10 @@ class ZipStream {
             extra: extra,
             comment: comment,
             method: 8, // METHOD_DEFLATED
-            minver: 45, // MIN_VERSION_ZIP64
-            ver: 45,
             size: 0,
             csize: 0,
             crc: 0,
-            fileOffset: this.offset
+            fileOffset: this.offset,
         };
 
         this.fileDataArray.push(fileData);
@@ -82,6 +70,21 @@ class ZipStream {
         this._writeLocalFileHeader(fileData);
         await this._writeLocalFileContent(filePath, fileData);
         this._writeDataDescriptor(fileData);
+
+        // If this file needs the Zip64 format, modify certain values here.
+        if(isFileZip64(fileData.size, fileData.csize, fileData.fileOffset)) {
+            fileData.extra = Buffer.concat([
+                getShortBytes(ZIP64_EXTRA_ID),
+                getShortBytes(24),
+                getEightBytes(fileData.size),
+                getEightBytes(fileData.csize),
+                getEightBytes(fileData.fileOffset)
+            ]);
+
+            fileData.size = ZIP64_MAGIC;
+            fileData.csize = ZIP64_MAGIC;
+            fileData.fileOffset = ZIP64_MAGIC;
+        }
     }
 
     writeToStream(chunk) {
@@ -94,6 +97,7 @@ class ZipStream {
 
     finish() {
         // Write the final data for the zip file and then close the stream.
+        let records = this.fileDataArray.length;
         let centralOffset = this.offset;
 
         for(let fileData of this.fileDataArray) {
@@ -102,7 +106,13 @@ class ZipStream {
 
         let centralLength = this.offset - centralOffset;
 
-        this._writeCentralDirectoryEnd(centralLength, centralOffset);
+        if(isArchiveZip64(records, centralLength, centralOffset)) {
+            this._writeCentralDirectoryZip64(records, centralLength, centralOffset);
+            this._writeCentralDirectoryEnd(ZIP64_MAGIC_SHORT, ZIP64_MAGIC, ZIP64_MAGIC);
+        }
+        else {
+            this._writeCentralDirectoryEnd(records, centralLength, centralOffset);
+        }
 
         this.outputStream.end();
     }
@@ -112,7 +122,7 @@ class ZipStream {
         this.writeToStream(getLongBytes(SIG_LFH));
       
         // version to extract and general bit flag
-        this.writeToStream(getShortBytes(fileData.minver));
+        this.writeToStream(getShortBytes(MIN_VERSION_ZIP64));
         this.writeToStream(getShortBytes(GENERAL_BIT_FLAG));
       
         // compression method
@@ -178,8 +188,14 @@ class ZipStream {
         this.writeToStream(getLongBytes(fileData.crc));
       
         // sizes
-        this.writeToStream(getLongBytes(fileData.csize));
-        this.writeToStream(getLongBytes(fileData.size));
+        if(isFileZip64(fileData.size, fileData.csize, fileData.fileOffset)) {
+            this.writeToStream(getEightBytes(fileData.csize));
+            this.writeToStream(getEightBytes(fileData.size));
+        }
+        else {
+            this.writeToStream(getLongBytes(fileData.csize));
+            this.writeToStream(getLongBytes(fileData.size));
+        }
     }
 
     _writeCentralFileHeader(fileData) {
@@ -187,10 +203,10 @@ class ZipStream {
         this.writeToStream(getLongBytes(SIG_CFH));
       
         // version made by
-        this.writeToStream(getShortBytes(fileData.ver));
+        this.writeToStream(getShortBytes(MIN_VERSION_ZIP64));
       
         // version to extract and general bit flag
-        this.writeToStream(getShortBytes(fileData.minver));
+        this.writeToStream(getShortBytes(MIN_VERSION_ZIP64));
         this.writeToStream(getShortBytes(GENERAL_BIT_FLAG));
       
         // compression method
@@ -237,9 +253,45 @@ class ZipStream {
         this.writeToStream(fileData.comment);
     }
 
-    _writeCentralDirectoryEnd(size, offset) {
-        let records = this.fileDataArray.length;
+    _writeCentralDirectoryZip64(records, size, offset) {
+        // signature
+        this.writeToStream(getLongBytes(SIG_ZIP64_EOCD));
       
+        // size of the ZIP64 EOCD record
+        this.writeToStream(getEightBytes(44));
+      
+        // version made by
+        this.writeToStream(getShortBytes(MIN_VERSION_ZIP64));
+      
+        // version to extract
+        this.writeToStream(getShortBytes(MIN_VERSION_ZIP64));
+      
+        // disk numbers (just use 0)
+        this.writeToStream(Buffer.alloc(4));
+        this.writeToStream(Buffer.alloc(4));
+      
+        // number of entries
+        this.writeToStream(getEightBytes(records));
+        this.writeToStream(getEightBytes(records));
+      
+        // length and location of CD
+        this.writeToStream(getEightBytes(size));
+        this.writeToStream(getEightBytes(offset));
+      
+        // end of central directory locator
+        this.writeToStream(getLongBytes(SIG_ZIP64_EOCD_LOC));
+      
+        // disk number holding the ZIP64 EOCD record (just use 0)
+        this.writeToStream(Buffer.alloc(4));
+      
+        // relative offset of the ZIP64 EOCD record
+        this.writeToStream(getEightBytes(size + offset));
+      
+        // total number of disks (just use 1)
+        this.writeToStream(getLongBytes(1));
+    };
+
+    _writeCentralDirectoryEnd(records, size, offset) {
         // signature
         this.writeToStream(getLongBytes(SIG_EOCD));
       
@@ -259,6 +311,14 @@ class ZipStream {
         this.writeToStream(getShortBytes(this.archiveComment.length));
         this.writeToStream(this.archiveComment);
     }
+}
+
+function isFileZip64(size, csize, fileOffset) {
+    return size > ZIP64_MAGIC || csize > ZIP64_MAGIC || fileOffset > ZIP64_MAGIC;
+};
+
+function isArchiveZip64(records, centralLength, centralOffset) {
+    return records > ZIP64_MAGIC_SHORT || centralLength > ZIP64_MAGIC || centralOffset > ZIP64_MAGIC;
 }
 
 function dateToDos(d, forceLocalTime) {
@@ -301,6 +361,14 @@ function getShortBytes(v) {
 function getLongBytes(v) {
     var buf = Buffer.alloc(4);
     buf.writeUInt32LE((v & 0xFFFFFFFF) >>> 0, 0);
+
+    return buf;
+};
+
+function getEightBytes(v) {
+    var buf = Buffer.alloc(8);
+    buf.writeUInt32LE(v % 0x0100000000, 0);
+    buf.writeUInt32LE((v / 0x0100000000) | 0, 4);
 
     return buf;
 };
