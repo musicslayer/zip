@@ -151,7 +151,7 @@ class ZipStream {
     }
 
     async _writeLocalFileContent(filePath, fileData) {
-        // Create the stream pipeline that will stream data from the file into a zlib compressor and then into the zip file.
+        // Create the stream pipeline that will stream data from the uncompressed file into a zlib compressor and then into the zip file.
 
         // Read file.
         let inputStream = fs.createReadStream(filePath);
@@ -166,18 +166,18 @@ class ZipStream {
         })
 
         // Compress data with zlib
-        let compressedStream = zlib.createDeflateRaw({ level: this.compressionLevel });
+        let compressStream = zlib.createDeflateRaw({ level: this.compressionLevel });
         
         // Intercept compressed data.
         let compressedPassThroughStream = new stream.PassThrough();
         compressedPassThroughStream.on("data", (chunk) => {
             if(chunk) {
                 fileData.csize += chunk.length;
+                this.writeToStream(chunk);
             }
-            this.writeToStream(chunk);
         })
 
-        await stream.promises.pipeline(inputStream, contentPassThroughStream, compressedStream, compressedPassThroughStream);
+        await stream.promises.pipeline(inputStream, contentPassThroughStream, compressStream, compressedPassThroughStream);
     }
 
     _writeDataDescriptor(fileData) {
