@@ -15,6 +15,7 @@ const ZIP64_MAGIC = 0xffffffff;
 const ZIP64_EXTRA_ID = 0x0001;
 
 const MIN_VERSION_ZIP64 = 45;
+const METHOD_DEFLATED = 8;
 
 // Indicates that the size, csize, and crc values will not be known by the time we are writing local file headers.
 const GENERAL_BIT_FLAG = 8;
@@ -57,7 +58,6 @@ class ZipStream {
             time: time,
             extra: extra,
             comment: comment,
-            method: 8, // METHOD_DEFLATED
             size: 0,
             csize: 0,
             crc: 0,
@@ -126,7 +126,7 @@ class ZipStream {
         this.writeToStream(getShortBytes(GENERAL_BIT_FLAG));
       
         // compression method
-        this.writeToStream(getShortBytes(fileData.method));
+        this.writeToStream(getShortBytes(METHOD_DEFLATED));
       
         // datetime
         this.writeToStream(getLongBytes(fileData.time));
@@ -210,7 +210,7 @@ class ZipStream {
         this.writeToStream(getShortBytes(GENERAL_BIT_FLAG));
       
         // compression method
-        this.writeToStream(getShortBytes(fileData.method));
+        this.writeToStream(getShortBytes(METHOD_DEFLATED));
       
         // datetime
         this.writeToStream(getLongBytes(fileData.time));
