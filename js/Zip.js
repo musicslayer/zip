@@ -11,9 +11,9 @@ class Zip {
         }
 
         // Recursively process the directory, adding any files found along the way to the zip file.
-        let zipStream = new ZipStream(zipFilePath, compressionLevel);
+        let zipStream = new ZipStream(zipFilePath, srcFolder, compressionLevel);
         await Zip.processDirectory(zipStream, srcFolder);
-        zipStream.finish();
+        await zipStream.finish();
     }
 
     static async processDirectory(zipStream, dir) {

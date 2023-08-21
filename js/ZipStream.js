@@ -25,11 +25,13 @@ class ZipStream {
     offset = 0;
 
     outputStream;
+    basePath;
     compressionLevel;
     archiveComment;
 
-    constructor(zipFilePath, compressionLevel) {
+    constructor(zipFilePath, basePath, compressionLevel) {
         this.outputStream = fs.createWriteStream(zipFilePath);
+        this.basePath = basePath;
         this.compressionLevel = compressionLevel;
 
         // For the archive comment, just use the empty string.
@@ -39,9 +41,12 @@ class ZipStream {
     async addFile(filePath) {
         // Add a single file to the zip file.
 
-        // For the name, use the relative path.
-        let fileParts = filePath.split(path.sep);
-        let name = path.join(...fileParts.slice(-2));
+        // For the name, use the path relative to basePath.
+        // Join parts with the Unix filesep "/" regardless of which one is used by this OS.
+        let baseFolder = this.basePath.split(path.sep).slice(-1)[0];
+        let relativefilePath = path.join(baseFolder, filePath.replace(this.basePath, ""));
+        let relativeFileParts = relativefilePath.split(path.sep);
+        let name = relativeFileParts.join("/");
 
         // For the time, use the mtime.
         let stats = fs.lstatSync(filePath);
@@ -58,9 +63,9 @@ class ZipStream {
             time: time,
             extra: extra,
             comment: comment,
+            crc: 0,
             size: 0,
             csize: 0,
-            crc: 0,
             fileOffset: this.offset,
         };
 
@@ -90,31 +95,34 @@ class ZipStream {
     writeToStream(chunk) {
         if(chunk) {
             this.offset += chunk.length;
+            this.outputStream.write(chunk);
         }
-
-        this.outputStream.write(chunk);
     }
 
-    finish() {
+    async finish() {
         // Write the final data for the zip file and then close the stream.
-        let records = this.fileDataArray.length;
-        let centralOffset = this.offset;
-
-        for(let fileData of this.fileDataArray) {
-            this._writeCentralFileHeader(fileData);
-        }
-
-        let centralLength = this.offset - centralOffset;
-
-        if(isArchiveZip64(records, centralLength, centralOffset)) {
-            this._writeCentralDirectoryZip64(records, centralLength, centralOffset);
-            this._writeCentralDirectoryEnd(ZIP64_MAGIC_SHORT, ZIP64_MAGIC, ZIP64_MAGIC);
-        }
-        else {
-            this._writeCentralDirectoryEnd(records, centralLength, centralOffset);
-        }
-
-        this.outputStream.end();
+        return new Promise((resolve) => {
+            let records = this.fileDataArray.length;
+            let centralOffset = this.offset;
+        
+            for(let fileData of this.fileDataArray) {
+                this._writeCentralFileHeader(fileData);
+            }
+        
+            let centralLength = this.offset - centralOffset;
+        
+            if(isArchiveZip64(records, centralLength, centralOffset)) {
+                this._writeCentralDirectoryZip64(records, centralLength, centralOffset);
+                this._writeCentralDirectoryEnd(ZIP64_MAGIC_SHORT, ZIP64_MAGIC, ZIP64_MAGIC);
+            }
+            else {
+                this._writeCentralDirectoryEnd(records, centralLength, centralOffset);
+            }
+        
+            this.outputStream.end(() => {
+                resolve()
+            });
+        });
     }
 
     _writeLocalFileHeader(fileData) {
