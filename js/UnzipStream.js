@@ -1,6 +1,4 @@
 const fs = require("fs");
-const path = require("path");
-const stream = require("stream");
 const zlib = require("zlib");
 
 const SIG_LFH = 0x04034b50;
@@ -8,79 +6,105 @@ const SIG_DD = 0x08074b50;
 const SIG_CFH = 0x02014b50;
 const SIG_EOCD = 0x06054b50;
 const SIG_ZIP64_EOCD = 0x06064B50;
-const SIG_ZIP64_EOCD_LOC = 0x07064B50;
 
-const ZIP64_MAGIC_SHORT = 0xffff;
-const ZIP64_MAGIC = 0xffffffff;
 const ZIP64_EXTRA_ID = 0x0001;
 
 class UnzipStream {
-    fileDataArray = [];
-    offset = 0;
-
     inputStream;
-    compressionLevel;
-    destFolder;
+
+    fileDataMap = new Map();
 
     ////
     zipFileContent;
+    zipFileLocalContent;
 
-    constructor(zipFilePath, compressionLevel, destFolder) {
+    constructor(zipFilePath) {
         this.inputStream = fs.createReadStream(zipFilePath, "binary");
-        this.compressionLevel = compressionLevel;
-        this.destFolder = destFolder;
         this.zipFileContent = fs.readFileSync(zipFilePath);
+        this.zipFileLocalContent = Buffer.alloc(0);
     }
 
     async extractFiles() {
-        let done = false;
-        let fileData = {};
+        // Read Central Directory entries to get file information, then read Local File entries to get file content.
+        this.readCentralDirectoryEntries();
+        this.zipFileContent = this.zipFileLocalContent;
+        await this.readLocalFileEntries();
+    }
 
-        while(!done) {
+    readCentralDirectoryEntries() {
+        // Skip all the Local File entries.
+        while(this._peekLong() !== SIG_CFH) {
+            this.zipFileLocalContent = Buffer.concat([this.zipFileLocalContent, this._readBytes(1)]);
+        }
+
+        while(this.zipFileContent.length > 0) {
             let signature = this._readLong();
             switch(signature) {
-                case SIG_LFH:
-                    console.log("SIG_LFH");
-                    this._processLocalFileHeader(fileData);
-                    let uncompressedFileContent = await this._processLocalFileContent(fileData);
-                    break;
-
-                case SIG_DD:
-                    console.log("SIG_DD");
-                    this._processDataDescriptor();
-
-                    // Finish processing the fileData and then reset it.
-                    this._processFileData(fileData);
-                    fileData = {};
-                    break;
-
                 case SIG_CFH:
-                    // At this point we can stop processing the file.
-                    console.log("SIG_CFH");
-                    done = true;
+                    let fileData = {};
+
+                    this._processCentralFileHeader(fileData);
+                    let zip64Record = getZip64ExtraRecord(fileData.extra)
+                    if(zip64Record) {
+                        // Use the values in the Zip64 record instead of the Central Directory.
+                        fileData.size = getEightValue(zip64Record.subarray(0, 8));
+                        fileData.csize = getEightValue(zip64Record.subarray(8, 16));
+                        fileData.fileOffset = getEightValue(zip64Record.subarray(16, 24));
+                    }
+
+                    this.fileDataMap.set(fileData.name, fileData);
+
+                    break;
+
+                case SIG_EOCD:
+                    this._processCentralDirectoryEnd();
+                    break;
+
+                case SIG_ZIP64_EOCD:
+                    this._processCentralDirectoryZip64();
                     break;
 
                 default:
-                    throw("Invalid character: " + theCharValue);
+                    throw("Invalid signature: " + signature);
             }
         }
     }
 
-    _processLocalFileHeader(fileData) {
+    async readLocalFileEntries() {
+        while(this.zipFileContent.length > 0) {
+            let signature = this._readLong();
+            switch(signature) {
+                case SIG_LFH:
+                    let name = this._processLocalFileHeader();
+                    let fileData = this.fileDataMap.get(name) ?? {};
+
+                    // If fileData was not in the map, that means any values that would be stored on fileData are unwanted.
+                    await this._processLocalFileContent(fileData);
+                    this._processDataDescriptor(fileData);
+                    
+                    break;
+
+                default:
+                    throw("Invalid signature: " + signature);
+            }
+        }
+    }
+
+    _processLocalFileHeader() {
         // version to extract and general bit flag
-        let version = this._readShort();
-        let generalBitFlag = this._readShort();
+        this._readShort();
+        this._readShort();
 
         // compression method
-        let compressionMethod = this._readShort();
+        this._readShort();
 
         // datetime
-        let time = this._readLong();
+        this._readLong();
 
         // crc32 checksum and sizes
-        let crc = this._readLong();
-        let csize = this._readLong();
-        let size = this._readLong();
+        this._readLong();
+        this._readLong();
+        this._readLong();
 
         // name length
         let nameLength = this._readShort();
@@ -89,31 +113,20 @@ class UnzipStream {
         let extraLength = this._readShort();
 
         // name
-        fileData.name = this._readString(nameLength);
+        let name = this._readString(nameLength);
 
         // extra
-        fileData.extra = this._readString(extraLength);
+        this._readBytes(extraLength);
+
+        return name;
     }
 
     _processLocalFileContent(fileData) {
-        // Decompress the file content and create a new file object.
-        // In general, the file content keeps going until we see the Data Descriptor signature.
+        // Decompress the file content, which keeps going until we see the next Data Descriptor signature.
         return new Promise((resolve) => {
-            let found = false;
-            let fileContent = Buffer.alloc(0);
-            while(this.zipFileContent.length > 8) {
-                if(this._peekLong() === SIG_DD) {
-                    found = true;
-                    break;
-                }
-                else {
-                    fileContent = Buffer.concat([fileContent, this._readBytes(1)]);
-                }
-            }
-
             fileData.uncompressedFileContent = Buffer.alloc(0);
 
-            let decompressStream = zlib.createInflateRaw({ level: this.compressionLevel });
+            let decompressStream = zlib.createInflateRaw();
             decompressStream.on("data", (chunk) => {
                 if(chunk) {
                     fileData.uncompressedFileContent = Buffer.concat([fileData.uncompressedFileContent, chunk]);
@@ -124,44 +137,138 @@ class UnzipStream {
                 resolve();
             });
 
-            decompressStream.write(fileContent);
+            while(this._peekLong() !== SIG_DD) {
+                decompressStream.write(this._readBytes(1));
+            }
+
             decompressStream.end();
         });
     }
 
-    _processDataDescriptor() {
-        // version to extract and general bit flag
-        let crc = this._readLong();
-        let csize;
-        let size;
+    _processDataDescriptor(fileData) {
+        // signature
+        this._readLong();
 
-        let isFileZip64 = false; /////
+        // crc32 checksum
+        fileData.crc = this._readLong();
 
-        if(isFileZip64) {
-            csize = this._readEight();
-            size = this._readEight();
+        // sizes
+        if(getZip64ExtraRecord(fileData.extra)) {
+            fileData.csize = this._readEight();
+            fileData.size = this._readEight();
         }
         else {
-            csize = this._readLong();
-            size = this._readLong();
+            fileData.csize = this._readLong();
+            fileData.size = this._readLong();
         }
     }
 
-
-
-    _processFileData(fileData) {
-        console.log(fileData);
-
-        let destPath = path.join(this.destFolder, fileData.name);
-        console.log(destPath);
-
-        // Create any neccessary folders and then write the file content.
-        let fileParts = destPath.split(path.sep);
-        let fileFolder = path.join(...fileParts.slice(0, -1));
-        fs.mkdirSync(fileFolder, { recursive: true });
-
-        fs.writeFileSync(destPath, fileData.uncompressedFileContent);
+    _processCentralFileHeader(fileData) {
+        // version made by
+        this._readShort();
+      
+        // version to extract and general bit flag
+        this._readShort();
+        this._readShort();
+      
+        // compression method
+        this._readShort();
+      
+        // datetime
+        fileData.time = this._readLong();
+      
+        // crc32 checksum
+        fileData.crc = this._readLong();
+      
+        // sizes
+        fileData.csize = this._readLong();
+        fileData.size = this._readLong();
+      
+        // name length
+        let nameLength = this._readShort();
+      
+        // extra length
+        let extraLength = this._readShort();
+      
+        // comments length
+        let commentLength = this._readShort();
+      
+        // disk number start
+        this._readShort();
+      
+        // internal attributes
+        fileData.internalAttributes = this._readShort();
+      
+        // external attributes
+        fileData.externalAttributes = this._readLong();
+      
+        // relative offset of LFH
+        fileData.fileOffset = this._readLong();
+      
+        // name
+        fileData.name = this._readString(nameLength);
+      
+        // extra
+        fileData.extra = this._readBytes(extraLength);
+      
+        // comment
+        fileData.comment = this._readString(commentLength);
     }
+
+    _processCentralDirectoryZip64() {
+        // size of the ZIP64 EOCD record
+        this._readEight();
+      
+        // version made by
+        this._readShort();
+      
+        // version to extract
+        this._readShort();
+      
+        // disk numbers
+        this._readLong();
+        this._readLong();
+      
+        // number of entries
+        this._readEight();
+        this._readEight();
+      
+        // length and location of CD
+        this._readEight();
+        this._readEight();
+      
+        // end of central directory locator
+        this._readLong();
+      
+        // disk number holding the ZIP64 EOCD record
+        this._readLong();
+      
+        // relative offset of the ZIP64 EOCD record
+        this._readEight();
+      
+        // total number of disks
+        this._readLong();
+    }
+
+    _processCentralDirectoryEnd() {
+        // disk numbers
+        this._readShort();
+        this._readShort();
+      
+        // number of entries
+        this._readShort();
+        this._readShort();
+      
+        // length and location of CD
+        this._readLong();
+        this._readLong();
+      
+        // archive comment
+        let archiveCommentLength = this._readShort();
+        this._readString(archiveCommentLength);
+    }
+
+    
 
 
 
@@ -213,6 +320,27 @@ class UnzipStream {
         return bytes;
     };
 }
+
+function getZip64ExtraRecord(extra) {
+    // Look for an extra record indicating the Zip64 format was used.
+    while(extra.length > 0) {
+        let id = getShortValue(readBytes(2));
+        let recordLength = getShortValue(readBytes(2));
+        let zip64Record = readBytes(recordLength);
+        if(id === ZIP64_EXTRA_ID) {
+            return zip64Record;
+        }
+    }
+
+    return undefined;
+
+    function readBytes(n) {
+        // Return and consume n bytes from extra.
+        let bytes = extra.subarray(0, n);
+        extra = extra.subarray(n);
+        return bytes;
+    };
+};
 
 function getShortValue(bytes) {
     return bytes.readUInt16LE();

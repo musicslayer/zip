@@ -52,7 +52,7 @@ class ZipStream {
         let stats = fs.lstatSync(filePath);
         let time = dateToDos(stats.mtime, true);
 
-        // For the extra, start with an empty buffer.
+        // For the extra, just use an empty buffer.
         let extra = Buffer.alloc(0);
 
         // For the comment, just use the empty string.
@@ -66,6 +66,8 @@ class ZipStream {
             crc: 0,
             size: 0,
             csize: 0,
+            internalAttributes: 0,
+            externalAttributes: 0,
             fileOffset: this.offset,
         };
 
@@ -76,13 +78,18 @@ class ZipStream {
         await this._writeLocalFileContent(filePath, fileData);
         this._writeDataDescriptor(fileData);
 
-        // If this file needs the Zip64 format, modify certain values here.
+        // If this file needs the Zip64 format, modify certain values here to use in the Central Directory entries later.
         if(isFileZip64(fileData.size, fileData.csize, fileData.fileOffset)) {
             fileData.extra = Buffer.concat([
+                fileData.extra,
+
                 getShortBytes(ZIP64_EXTRA_ID),
                 getShortBytes(24),
-                getEightBytes(fileData.size),
-                getEightBytes(fileData.csize),
+
+                // Because we are using the Data Descriptor, just use 0 here.
+                getEightBytes(0), // fileData.size
+                getEightBytes(0), // fileData.csize
+
                 getEightBytes(fileData.fileOffset)
             ]);
 
@@ -242,11 +249,11 @@ class ZipStream {
         // disk number start (just use 0)
         this.writeToStream(Buffer.alloc(2));
       
-        // internal attributes (just use 0)
-        this.writeToStream(getShortBytes(0));
+        // internal attributes
+        this.writeToStream(getShortBytes(fileData.internalAttributes));
       
-        // external attributes (just use 0)
-        this.writeToStream(getLongBytes(0));
+        // external attributes
+        this.writeToStream(getLongBytes(fileData.externalAttributes));
       
         // relative offset of LFH
         this.writeToStream(getLongBytes(fileData.fileOffset));
