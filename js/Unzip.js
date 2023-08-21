@@ -25,7 +25,6 @@ class Unzip {
             let fileParts = destPath.split(path.sep);
             let fileFolder = path.join(...fileParts.slice(0, -1));
             fs.mkdirSync(fileFolder, { recursive: true });
-
             fs.writeFileSync(destPath, fileData.uncompressedFileContent);
         }
     }

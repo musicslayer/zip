@@ -24,18 +24,25 @@ class ZipStream {
     fileDataArray = [];
     offset = 0;
 
-    outputStream;
+    outputFD;
     basePath;
     compressionLevel;
     archiveComment;
 
     constructor(zipFilePath, basePath, compressionLevel) {
-        this.outputStream = fs.createWriteStream(zipFilePath);
+        this.outputFD = fs.openSync(zipFilePath, "w");
         this.basePath = basePath;
         this.compressionLevel = compressionLevel;
 
         // For the archive comment, just use the empty string.
         this.archiveComment = "";
+    }
+
+    writeData(chunk) {
+        if(chunk) {
+            this.offset += chunk.length;
+            fs.writeSync(this.outputFD, chunk);
+        }
     }
 
     async addFile(filePath) {
@@ -99,70 +106,59 @@ class ZipStream {
         }
     }
 
-    writeToStream(chunk) {
-        if(chunk) {
-            this.offset += chunk.length;
-            this.outputStream.write(chunk);
-        }
-    }
-
-    async finish() {
+    finish() {
         // Write the final data for the zip file and then close the stream.
-        return new Promise((resolve) => {
-            let records = this.fileDataArray.length;
-            let centralOffset = this.offset;
-        
-            for(let fileData of this.fileDataArray) {
-                this._writeCentralFileHeader(fileData);
-            }
-        
-            let centralLength = this.offset - centralOffset;
-        
-            if(isArchiveZip64(records, centralLength, centralOffset)) {
-                this._writeCentralDirectoryZip64(records, centralLength, centralOffset);
-                this._writeCentralDirectoryEnd(ZIP64_MAGIC_SHORT, ZIP64_MAGIC, ZIP64_MAGIC);
-            }
-            else {
-                this._writeCentralDirectoryEnd(records, centralLength, centralOffset);
-            }
-        
-            this.outputStream.end(() => {
-                resolve()
-            });
-        });
+        let records = this.fileDataArray.length;
+        let centralOffset = this.offset;
+    
+        for(let fileData of this.fileDataArray) {
+            this._writeCentralFileHeader(fileData);
+        }
+    
+        let centralLength = this.offset - centralOffset;
+    
+        if(isArchiveZip64(records, centralLength, centralOffset)) {
+            this._writeCentralDirectoryZip64(records, centralLength, centralOffset);
+            this._writeCentralDirectoryEnd(ZIP64_MAGIC_SHORT, ZIP64_MAGIC, ZIP64_MAGIC);
+        }
+        else {
+            this._writeCentralDirectoryEnd(records, centralLength, centralOffset);
+        }
+
+        fs.closeSync(this.outputFD);
     }
 
     _writeLocalFileHeader(fileData) {
         // signature
-        this.writeToStream(getLongBytes(SIG_LFH));
+        this.writeData(getLongBytes(SIG_LFH));
       
         // version to extract and general bit flag
-        this.writeToStream(getShortBytes(MIN_VERSION_ZIP64));
-        this.writeToStream(getShortBytes(GENERAL_BIT_FLAG));
+        this.writeData(getShortBytes(MIN_VERSION_ZIP64));
+        this.writeData(getShortBytes(GENERAL_BIT_FLAG));
       
         // compression method
-        this.writeToStream(getShortBytes(METHOD_DEFLATED));
+        this.writeData(getShortBytes(METHOD_DEFLATED));
       
         // datetime
-        this.writeToStream(getLongBytes(fileData.time));
+        this.writeData(getLongBytes(fileData.time));
       
         // crc32 checksum and sizes
         // Use zeroes here and write the real values later.
-        this.writeToStream(Buffer.alloc(4));
-        this.writeToStream(Buffer.alloc(4));
-        this.writeToStream(Buffer.alloc(4));
+        this.writeData(Buffer.alloc(4));
+        this.writeData(Buffer.alloc(4));
+        this.writeData(Buffer.alloc(4));
       
         // name length
-        this.writeToStream(getShortBytes(fileData.name.length));
+        this.writeData(getShortBytes(fileData.name.length));
       
         // extra length
-        this.writeToStream(getShortBytes(fileData.extra.length));
+        this.writeData(getShortBytes(fileData.extra.length));
       
         // name
-        this.writeToStream(fileData.name);
+        this.writeData(fileData.name);
       
         // extra
-        this.writeToStream(fileData.extra);
+        this.writeData(fileData.extra);
     }
 
     async _writeLocalFileContent(filePath, fileData) {
@@ -188,7 +184,7 @@ class ZipStream {
         compressedPassThroughStream.on("data", (chunk) => {
             if(chunk) {
                 fileData.csize += chunk.length;
-                this.writeToStream(chunk);
+                this.writeData(chunk);
             }
         })
 
@@ -197,134 +193,134 @@ class ZipStream {
 
     _writeDataDescriptor(fileData) {
         // signature
-        this.writeToStream(getLongBytes(SIG_DD));
+        this.writeData(getLongBytes(SIG_DD));
       
         // crc32 checksum
-        this.writeToStream(getLongBytes(fileData.crc));
+        this.writeData(getLongBytes(fileData.crc));
       
         // sizes
         if(isFileZip64(fileData.size, fileData.csize, fileData.fileOffset)) {
-            this.writeToStream(getEightBytes(fileData.csize));
-            this.writeToStream(getEightBytes(fileData.size));
+            this.writeData(getEightBytes(fileData.csize));
+            this.writeData(getEightBytes(fileData.size));
         }
         else {
-            this.writeToStream(getLongBytes(fileData.csize));
-            this.writeToStream(getLongBytes(fileData.size));
+            this.writeData(getLongBytes(fileData.csize));
+            this.writeData(getLongBytes(fileData.size));
         }
     }
 
     _writeCentralFileHeader(fileData) {
         // signature
-        this.writeToStream(getLongBytes(SIG_CFH));
+        this.writeData(getLongBytes(SIG_CFH));
       
         // version made by
-        this.writeToStream(getShortBytes(MIN_VERSION_ZIP64));
+        this.writeData(getShortBytes(MIN_VERSION_ZIP64));
       
         // version to extract and general bit flag
-        this.writeToStream(getShortBytes(MIN_VERSION_ZIP64));
-        this.writeToStream(getShortBytes(GENERAL_BIT_FLAG));
+        this.writeData(getShortBytes(MIN_VERSION_ZIP64));
+        this.writeData(getShortBytes(GENERAL_BIT_FLAG));
       
         // compression method
-        this.writeToStream(getShortBytes(METHOD_DEFLATED));
+        this.writeData(getShortBytes(METHOD_DEFLATED));
       
         // datetime
-        this.writeToStream(getLongBytes(fileData.time));
+        this.writeData(getLongBytes(fileData.time));
       
         // crc32 checksum
-        this.writeToStream(getLongBytes(fileData.crc));
+        this.writeData(getLongBytes(fileData.crc));
       
         // sizes
-        this.writeToStream(getLongBytes(fileData.csize));
-        this.writeToStream(getLongBytes(fileData.size));
+        this.writeData(getLongBytes(fileData.csize));
+        this.writeData(getLongBytes(fileData.size));
       
         // name length
-        this.writeToStream(getShortBytes(fileData.name.length));
+        this.writeData(getShortBytes(fileData.name.length));
       
         // extra length
-        this.writeToStream(getShortBytes(fileData.extra.length));
+        this.writeData(getShortBytes(fileData.extra.length));
       
         // comments length
-        this.writeToStream(getShortBytes(fileData.comment.length));
+        this.writeData(getShortBytes(fileData.comment.length));
       
         // disk number start (just use 0)
-        this.writeToStream(Buffer.alloc(2));
+        this.writeData(Buffer.alloc(2));
       
         // internal attributes
-        this.writeToStream(getShortBytes(fileData.internalAttributes));
+        this.writeData(getShortBytes(fileData.internalAttributes));
       
         // external attributes
-        this.writeToStream(getLongBytes(fileData.externalAttributes));
+        this.writeData(getLongBytes(fileData.externalAttributes));
       
         // relative offset of LFH
-        this.writeToStream(getLongBytes(fileData.fileOffset));
+        this.writeData(getLongBytes(fileData.fileOffset));
       
         // name
-        this.writeToStream(fileData.name);
+        this.writeData(fileData.name);
       
         // extra
-        this.writeToStream(fileData.extra);
+        this.writeData(fileData.extra);
       
         // comment
-        this.writeToStream(fileData.comment);
+        this.writeData(fileData.comment);
     }
 
     _writeCentralDirectoryZip64(records, size, offset) {
         // signature
-        this.writeToStream(getLongBytes(SIG_ZIP64_EOCD));
+        this.writeData(getLongBytes(SIG_ZIP64_EOCD));
       
         // size of the ZIP64 EOCD record
-        this.writeToStream(getEightBytes(44));
+        this.writeData(getEightBytes(44));
       
         // version made by
-        this.writeToStream(getShortBytes(MIN_VERSION_ZIP64));
+        this.writeData(getShortBytes(MIN_VERSION_ZIP64));
       
         // version to extract
-        this.writeToStream(getShortBytes(MIN_VERSION_ZIP64));
+        this.writeData(getShortBytes(MIN_VERSION_ZIP64));
       
         // disk numbers (just use 0)
-        this.writeToStream(Buffer.alloc(4));
-        this.writeToStream(Buffer.alloc(4));
+        this.writeData(Buffer.alloc(4));
+        this.writeData(Buffer.alloc(4));
       
         // number of entries
-        this.writeToStream(getEightBytes(records));
-        this.writeToStream(getEightBytes(records));
+        this.writeData(getEightBytes(records));
+        this.writeData(getEightBytes(records));
       
         // length and location of CD
-        this.writeToStream(getEightBytes(size));
-        this.writeToStream(getEightBytes(offset));
+        this.writeData(getEightBytes(size));
+        this.writeData(getEightBytes(offset));
       
         // end of central directory locator
-        this.writeToStream(getLongBytes(SIG_ZIP64_EOCD_LOC));
+        this.writeData(getLongBytes(SIG_ZIP64_EOCD_LOC));
       
         // disk number holding the ZIP64 EOCD record (just use 0)
-        this.writeToStream(Buffer.alloc(4));
+        this.writeData(Buffer.alloc(4));
       
         // relative offset of the ZIP64 EOCD record
-        this.writeToStream(getEightBytes(size + offset));
+        this.writeData(getEightBytes(size + offset));
       
         // total number of disks (just use 1)
-        this.writeToStream(getLongBytes(1));
+        this.writeData(getLongBytes(1));
     };
 
     _writeCentralDirectoryEnd(records, size, offset) {
         // signature
-        this.writeToStream(getLongBytes(SIG_EOCD));
+        this.writeData(getLongBytes(SIG_EOCD));
       
         // disk numbers (just use 0)
-        this.writeToStream(Buffer.alloc(2));
-        this.writeToStream(Buffer.alloc(2));
+        this.writeData(Buffer.alloc(2));
+        this.writeData(Buffer.alloc(2));
       
         // number of entries
-        this.writeToStream(getShortBytes(records));
-        this.writeToStream(getShortBytes(records));
+        this.writeData(getShortBytes(records));
+        this.writeData(getShortBytes(records));
       
         // length and location of CD
-        this.writeToStream(getLongBytes(size));
-        this.writeToStream(getLongBytes(offset));
+        this.writeData(getLongBytes(size));
+        this.writeData(getLongBytes(offset));
       
         // archive comment
-        this.writeToStream(getShortBytes(this.archiveComment.length));
-        this.writeToStream(this.archiveComment);
+        this.writeData(getShortBytes(this.archiveComment.length));
+        this.writeData(this.archiveComment);
     }
 }
 
