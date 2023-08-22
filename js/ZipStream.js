@@ -7,8 +7,8 @@ const SIG_LFH = 0x04034b50; // [80, 75, 3, 4]
 const SIG_DD = 0x08074b50; // [80, 75, 7, 8]
 const SIG_CFH = 0x02014b50; // [80, 75, 1, 2]
 const SIG_EOCD = 0x06054b50; // [80, 75, 5, 6]
-const SIG_ZIP64_EOCD = 0x06064B50; // [80, 75, 6, 6]
-const SIG_ZIP64_EOCD_LOC = 0x07064B50; // [80, 75, 6, 7]
+const SIG_ZIP64_EOCD = 0x06064b50; // [80, 75, 6, 6]
+const SIG_ZIP64_EOCD_LOC = 0x07064b50; // [80, 75, 6, 7]
 
 const ZIP64_MAGIC_SHORT = 0xffff;
 const ZIP64_MAGIC = 0xffffffff;

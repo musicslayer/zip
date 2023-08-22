@@ -5,7 +5,7 @@ const SIG_LFH = 0x04034b50; // [80, 75, 3, 4]
 const SIG_DD = 0x08074b50; // [80, 75, 7, 8]
 const SIG_CFH = 0x02014b50; // [80, 75, 1, 2]
 const SIG_EOCD = 0x06054b50; // [80, 75, 5, 6]
-const SIG_ZIP64_EOCD = 0x06064B50; // [80, 75, 6, 6]
+const SIG_ZIP64_EOCD = 0x06064b50; // [80, 75, 6, 6]
 
 const ZIP64_EXTRA_ID = 0x0001;
 
