@@ -1,11 +1,11 @@
 const fs = require("fs");
 const zlib = require("zlib");
 
-const SIG_LFH = 0x04034b50;
-const SIG_DD = 0x08074b50;
-const SIG_CFH = 0x02014b50;
-const SIG_EOCD = 0x06054b50;
-const SIG_ZIP64_EOCD = 0x06064B50;
+const SIG_LFH = 0x04034b50; // [80, 75, 3, 4]
+const SIG_DD = 0x08074b50; // [80, 75, 7, 8]
+const SIG_CFH = 0x02014b50; // [80, 75, 1, 2]
+const SIG_EOCD = 0x06054b50; // [80, 75, 5, 6]
+const SIG_ZIP64_EOCD = 0x06064B50; // [80, 75, 6, 6]
 
 const ZIP64_EXTRA_ID = 0x0001;
 
@@ -181,6 +181,8 @@ class UnzipStream {
                     numBytes -= MAX_BYTES_READ;
                     decompressStream.write(this._readBytes(MAX_BYTES_READ));
                 }
+
+                // At this point, we know "numBytes" is small enough to safely convert into a Number.
                 decompressStream.write(this._readBytes(Number(numBytes)));
             }
             else {
@@ -359,9 +361,17 @@ class UnzipStream {
 
     _searchLong(v, callback) {
         // Consume bytes from zipFileContent, stopping when the value "v" is found or there is no more data left.
+        // If a callback is provided, the consumed bytes will be passed in. 
         let data = Buffer.alloc(0);
         while(this._peekLong() !== v) {
             data = Buffer.concat([data, this._readBytes(1)]);
+
+            if(data.length === MAX_BYTES_READ) {
+                if(callback) {
+                    callback(data);
+                }
+                data = Buffer.alloc(0);
+            }
         }
 
         if(callback) {

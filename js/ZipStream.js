@@ -3,12 +3,12 @@ const path = require("path");
 const stream = require("stream");
 const zlib = require("zlib");
 
-const SIG_LFH = 0x04034b50;
-const SIG_DD = 0x08074b50;
-const SIG_CFH = 0x02014b50;
-const SIG_EOCD = 0x06054b50;
-const SIG_ZIP64_EOCD = 0x06064B50;
-const SIG_ZIP64_EOCD_LOC = 0x07064B50;
+const SIG_LFH = 0x04034b50; // [80, 75, 3, 4]
+const SIG_DD = 0x08074b50; // [80, 75, 7, 8]
+const SIG_CFH = 0x02014b50; // [80, 75, 1, 2]
+const SIG_EOCD = 0x06054b50; // [80, 75, 5, 6]
+const SIG_ZIP64_EOCD = 0x06064B50; // [80, 75, 6, 6]
+const SIG_ZIP64_EOCD_LOC = 0x07064B50; // [80, 75, 6, 7]
 
 const ZIP64_MAGIC_SHORT = 0xffff;
 const ZIP64_MAGIC = 0xffffffff;
@@ -18,6 +18,7 @@ const MIN_VERSION_ZIP64 = 45;
 const METHOD_DEFLATED = 8;
 
 // Indicates that the size, csize, and crc values will not be known by the time we are writing local file headers.
+// i.e. Each file will need a Data Descriptor after its content is written.
 const GENERAL_BIT_FLAG = 8;
 
 class ZipStream {
@@ -26,12 +27,14 @@ class ZipStream {
 
     outputFD;
     basePath;
+    baseFolder;
     compressionLevel;
     archiveComment;
 
     constructor(zipFilePath, basePath, compressionLevel) {
         this.outputFD = fs.openSync(zipFilePath, "w");
         this.basePath = basePath;
+        this.baseFolder = this.basePath.split(path.sep).slice(-1)[0];
         this.compressionLevel = compressionLevel;
 
         // For the archive comment, just use the empty string.
@@ -50,12 +53,11 @@ class ZipStream {
 
         // For the name, use the path relative to basePath.
         // Join parts with the Unix filesep "/" regardless of which one is used by this OS.
-        let baseFolder = this.basePath.split(path.sep).slice(-1)[0];
-        let relativefilePath = path.join(baseFolder, filePath.replace(this.basePath, ""));
+        let relativefilePath = path.join(this.baseFolder, filePath.replace(this.basePath, ""));
         let relativeFileParts = relativefilePath.split(path.sep);
         let name = relativeFileParts.join("/");
 
-        // For the time, use the mtime.
+        // For the time, convert the mtime to DOS time.
         let stats = fs.lstatSync(filePath);
         let time = dateToDos(stats.mtime, true);
 
@@ -65,16 +67,20 @@ class ZipStream {
         // For the comment, just use the empty string.
         let comment = "";
 
+        // For internal and external attributes, just use 0.
+        let internalAttributes = 0;
+        let externalAttributes = 0;
+
         let fileData = {
             name: name,
             time: time,
             extra: extra,
             comment: comment,
+            internalAttributes: internalAttributes,
+            externalAttributes: externalAttributes,
             crc: 0,
             size: 0,
             csize: 0,
-            internalAttributes: 0,
-            externalAttributes: 0,
             fileOffset: this.offset,
         };
 
@@ -93,11 +99,11 @@ class ZipStream {
                 getShortBytes(ZIP64_EXTRA_ID),
                 getShortBytes(24),
 
-                // Because we are using the Data Descriptor, just use 0 here.
-                getEightBytes(0), // fileData.size
-                getEightBytes(0), // fileData.csize
+                // Because we are using the Data Descriptor, just use 0 for the sizes.
+                getEightBytes(0n), // fileData.size
+                getEightBytes(0n), // fileData.csize
 
-                getEightBytes(fileData.fileOffset)
+                getEightBytes(BigInt(fileData.fileOffset)) // TODO This should be a BigInt?
             ]);
 
             fileData.size = ZIP64_MAGIC;
@@ -118,7 +124,7 @@ class ZipStream {
         let centralLength = this.offset - centralOffset;
     
         if(isArchiveZip64(records, centralLength, centralOffset)) {
-            this._writeCentralDirectoryZip64(records, centralLength, centralOffset);
+            this._writeCentralDirectoryZip64(BigInt(records), BigInt(centralLength), BigInt(centralOffset));
             this._writeCentralDirectoryEnd(ZIP64_MAGIC_SHORT, ZIP64_MAGIC, ZIP64_MAGIC);
         }
         else {
@@ -168,8 +174,8 @@ class ZipStream {
         let inputStream = fs.createReadStream(filePath);
         
         // Intercept uncompressed data.
-        let contentPassThroughStream = new stream.PassThrough();
-        contentPassThroughStream.on("data", (chunk) => {
+        let uncompressedPassThroughStream = new stream.PassThrough();
+        uncompressedPassThroughStream.on("data", (chunk) => {
             if(chunk) {
                 fileData.crc = crc32(chunk, fileData.crc);
                 fileData.size += chunk.length;
@@ -188,7 +194,7 @@ class ZipStream {
             }
         })
 
-        await stream.promises.pipeline(inputStream, contentPassThroughStream, compressStream, compressedPassThroughStream);
+        await stream.promises.pipeline(inputStream, uncompressedPassThroughStream, compressStream, compressedPassThroughStream);
     }
 
     _writeDataDescriptor(fileData) {
@@ -200,8 +206,8 @@ class ZipStream {
       
         // sizes
         if(isFileZip64(fileData.size, fileData.csize, fileData.fileOffset)) {
-            this.writeData(getEightBytes(fileData.csize));
-            this.writeData(getEightBytes(fileData.size));
+            this.writeData(getEightBytes(BigInt(fileData.csize)));
+            this.writeData(getEightBytes(BigInt(fileData.size)));
         }
         else {
             this.writeData(getLongBytes(fileData.csize));
@@ -269,7 +275,7 @@ class ZipStream {
         this.writeData(getLongBytes(SIG_ZIP64_EOCD));
       
         // size of the ZIP64 EOCD record
-        this.writeData(getEightBytes(44));
+        this.writeData(getEightBytes(44n));
       
         // version made by
         this.writeData(getShortBytes(MIN_VERSION_ZIP64));
@@ -364,23 +370,19 @@ function dateToDos(d, forceLocalTime) {
 
 function getShortBytes(v) {
     var buf = Buffer.alloc(2);
-    buf.writeUInt16LE((v & 0xFFFF) >>> 0, 0);
-
+    buf.writeUInt16LE(v);
     return buf;
 };
 
 function getLongBytes(v) {
     var buf = Buffer.alloc(4);
-    buf.writeUInt32LE((v & 0xFFFFFFFF) >>> 0, 0);
-
+    buf.writeUInt32LE(v);
     return buf;
 };
 
 function getEightBytes(v) {
     var buf = Buffer.alloc(8);
-    buf.writeUInt32LE(v % 0x0100000000, 0);
-    buf.writeUInt32LE((v / 0x0100000000) | 0, 4);
-
+    buf.writeBigUint64LE(v);
     return buf;
 };
 
@@ -444,7 +446,9 @@ function crc32(buf, previous) {
     for(let n = 0; n < buf.length; n++) {
         crc = CRC_TABLE[(crc ^ buf[n]) & 0xff] ^ (crc >>> 8);
     }
-    return (crc ^ -1);
+
+    // Always return an unsigned value.
+    return (crc ^ -1) >>> 0;
 }
 
 module.exports = ZipStream;
