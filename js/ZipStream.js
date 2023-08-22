@@ -23,7 +23,7 @@ const GENERAL_BIT_FLAG = 8;
 
 class ZipStream {
     fileDataArray = [];
-    offset = 0;
+    offset = 0n;
 
     outputFD;
     basePath;
@@ -43,7 +43,7 @@ class ZipStream {
 
     writeData(chunk) {
         if(chunk) {
-            this.offset += chunk.length;
+            this.offset += BigInt(chunk.length);
             fs.writeSync(this.outputFD, chunk);
         }
     }
@@ -79,8 +79,8 @@ class ZipStream {
             internalAttributes: internalAttributes,
             externalAttributes: externalAttributes,
             crc: 0,
-            size: 0,
-            csize: 0,
+            size: 0n,
+            csize: 0n,
             fileOffset: this.offset,
         };
 
@@ -103,18 +103,18 @@ class ZipStream {
                 getEightBytes(0n), // fileData.size
                 getEightBytes(0n), // fileData.csize
 
-                getEightBytes(BigInt(fileData.fileOffset)) // TODO This should be a BigInt?
+                getEightBytes(fileData.fileOffset)
             ]);
 
-            fileData.size = ZIP64_MAGIC;
-            fileData.csize = ZIP64_MAGIC;
-            fileData.fileOffset = ZIP64_MAGIC;
+            fileData.size = BigInt(ZIP64_MAGIC);
+            fileData.csize = BigInt(ZIP64_MAGIC);
+            fileData.fileOffset = BigInt(ZIP64_MAGIC);
         }
     }
 
     finish() {
         // Write the final data for the zip file and then close the stream.
-        let records = this.fileDataArray.length;
+        let records = BigInt(this.fileDataArray.length);
         let centralOffset = this.offset;
     
         for(let fileData of this.fileDataArray) {
@@ -124,11 +124,11 @@ class ZipStream {
         let centralLength = this.offset - centralOffset;
     
         if(isArchiveZip64(records, centralLength, centralOffset)) {
-            this._writeCentralDirectoryZip64(BigInt(records), BigInt(centralLength), BigInt(centralOffset));
+            this._writeCentralDirectoryZip64(records, centralLength, centralOffset);
             this._writeCentralDirectoryEnd(ZIP64_MAGIC_SHORT, ZIP64_MAGIC, ZIP64_MAGIC);
         }
         else {
-            this._writeCentralDirectoryEnd(records, centralLength, centralOffset);
+            this._writeCentralDirectoryEnd(Number(records), Number(centralLength), Number(centralOffset));
         }
 
         fs.closeSync(this.outputFD);
@@ -178,7 +178,7 @@ class ZipStream {
         uncompressedPassThroughStream.on("data", (chunk) => {
             if(chunk) {
                 fileData.crc = crc32(chunk, fileData.crc);
-                fileData.size += chunk.length;
+                fileData.size += BigInt(chunk.length);
             }
         })
 
@@ -189,7 +189,7 @@ class ZipStream {
         let compressedPassThroughStream = new stream.PassThrough();
         compressedPassThroughStream.on("data", (chunk) => {
             if(chunk) {
-                fileData.csize += chunk.length;
+                fileData.csize += BigInt(chunk.length);
                 this.writeData(chunk);
             }
         })
@@ -206,12 +206,12 @@ class ZipStream {
       
         // sizes
         if(isFileZip64(fileData.size, fileData.csize, fileData.fileOffset)) {
-            this.writeData(getEightBytes(BigInt(fileData.csize)));
-            this.writeData(getEightBytes(BigInt(fileData.size)));
+            this.writeData(getEightBytes(fileData.csize));
+            this.writeData(getEightBytes(fileData.size));
         }
         else {
-            this.writeData(getLongBytes(fileData.csize));
-            this.writeData(getLongBytes(fileData.size));
+            this.writeData(getLongBytes(Number(fileData.csize)));
+            this.writeData(getLongBytes(Number(fileData.size)));
         }
     }
 
@@ -236,8 +236,8 @@ class ZipStream {
         this.writeData(getLongBytes(fileData.crc));
       
         // sizes
-        this.writeData(getLongBytes(fileData.csize));
-        this.writeData(getLongBytes(fileData.size));
+        this.writeData(getLongBytes(Number(fileData.csize)));
+        this.writeData(getLongBytes(Number(fileData.size)));
       
         // name length
         this.writeData(getShortBytes(fileData.name.length));
@@ -258,7 +258,7 @@ class ZipStream {
         this.writeData(getLongBytes(fileData.externalAttributes));
       
         // relative offset of LFH
-        this.writeData(getLongBytes(fileData.fileOffset));
+        this.writeData(getLongBytes(Number(fileData.fileOffset)));
       
         // name
         this.writeData(fileData.name);

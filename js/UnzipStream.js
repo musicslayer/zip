@@ -141,8 +141,8 @@ class UnzipStream {
 
         // crc32 checksum and sizes
         fileData.crc = this._readLong();
-        fileData.csize = this._readLong();
-        fileData.size = this._readLong();
+        fileData.csize = BigInt(this._readLong());
+        fileData.size = BigInt(this._readLong());
 
         // name length
         let nameLength = this._readShort();
@@ -174,7 +174,7 @@ class UnzipStream {
             });
 
             if(fileData.csize > 0) {
-                // We know exactly how many bytes to read. Note that "csize" may be a BigInt.
+                // We know exactly how many bytes to read. Note that "csize" is a BigInt.
                 let numBytes = fileData.csize;
 
                 while(numBytes > MAX_BYTES_READ) {
@@ -207,8 +207,8 @@ class UnzipStream {
             fileData.size = this._readEight();
         }
         else {
-            fileData.csize = this._readLong();
-            fileData.size = this._readLong();
+            fileData.csize = BigInt(this._readLong());
+            fileData.size = BigInt(this._readLong());
         }
     }
 
@@ -252,7 +252,7 @@ class UnzipStream {
         fileData.externalAttributes = this._readLong();
       
         // relative offset of LFH
-        fileData.fileOffset = this._readLong();
+        fileData.fileOffset = BigInt(this._readLong());
       
         // name
         fileData.name = this._readString(nameLength);
