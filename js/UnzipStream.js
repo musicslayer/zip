@@ -139,7 +139,7 @@ class UnzipStream {
         // datetime
         fileData.time = this._readLong();
 
-        // crc32 checksum and sizes
+        // crc32 checksum, compressed size, and uncompressed size
         fileData.crc = this._readLong();
         fileData.csize = BigInt(this._readLong());
         fileData.size = BigInt(this._readLong());
@@ -173,25 +173,16 @@ class UnzipStream {
                 resolve();
             });
 
-            if(fileData.csize > 0) {
-                // We know exactly how many bytes to read. Note that "csize" is a BigInt.
-                let numBytes = fileData.csize;
+            // Note that "csize" is a BigInt and may be large, so we may not be able to process everything at once.
+            let numBytes = fileData.csize;
 
-                while(numBytes > MAX_BYTES_READ) {
-                    numBytes -= MAX_BYTES_READ;
-                    decompressStream.write(this._readBytes(MAX_BYTES_READ));
-                }
+            while(numBytes > MAX_BYTES_READ) {
+                numBytes -= MAX_BYTES_READ;
+                decompressStream.write(this._readBytes(MAX_BYTES_READ));
+            }
 
-                // At this point, we know "numBytes" is small enough to safely convert into a Number.
-                decompressStream.write(this._readBytes(Number(numBytes)));
-            }
-            else {
-                // We don't know how far to read, so keep going until we see the next Data Descriptor signature.
-                // This case will only happen if there is a Data Descriptor for this file.
-                this._searchLong(SIG_DD, (chunk) => {
-                    decompressStream.write(chunk);
-                });
-            }
+            // At this point, we know "numBytes" is small enough to safely convert into a Number.
+            decompressStream.write(this._readBytes(Number(numBytes)));
 
             decompressStream.end();
         });
@@ -201,7 +192,7 @@ class UnzipStream {
         // crc32 checksum
         fileData.crc = this._readLong();
 
-        // sizes
+        // compressed size and uncompressed size
         if(getZip64ExtraRecord(fileData.extra)) {
             fileData.csize = this._readEight();
             fileData.size = this._readEight();
@@ -229,7 +220,7 @@ class UnzipStream {
         // crc32 checksum
         fileData.crc = this._readLong();
       
-        // sizes
+        // compressed size and uncompressed size
         fileData.csize = this._readLong();
         fileData.size = this._readLong();
       
