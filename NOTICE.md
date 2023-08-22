@@ -1,6 +1,6 @@
 # NOTICE
 
-This work includes contributions from the third-party repositories listed below under the MIT License.
+This work includes content from the third-party repositories listed below under the MIT License.
 
 ## node-compress-commons
 
