@@ -334,7 +334,7 @@ class UnzipStream {
 
     _readString(strLength) {
         let bytes = this._readBytes(strLength);
-        return bytes.toString();
+        return getStringValue(bytes);
     };
 
     _readBytes(n) {
@@ -418,6 +418,10 @@ function getLongValue(bytes) {
 
 function getEightValue(bytes) {
     return bytes.readBigUInt64LE();
+};
+
+function getStringValue(bytes) {
+    return bytes.toString();
 };
 
 module.exports = UnzipStream;
