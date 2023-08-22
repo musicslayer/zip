@@ -43,6 +43,7 @@ class ZipStream {
 
     writeData(chunk) {
         if(chunk) {
+            chunk = Buffer.from(chunk);
             this.offset += BigInt(chunk.length);
             fs.writeSync(this.outputFD, chunk);
         }
