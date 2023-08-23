@@ -64,6 +64,7 @@ class UnzipStream {
 
             // To find values across read boundaries, we will read the ending bytes again with the next data.
             currentOffset += BigInt(numNewBytesRead);
+            this.offset -= BigInt(searchBoundaryLength);
         }
 
         this.closeFile();
