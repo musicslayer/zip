@@ -149,20 +149,15 @@ class UnzipStream {
     async _processLocalFileContent(fileData) {
         // Create the stream pipeline that will stream compressed data into a zlib decompressor.
 
+        // Note that "csize" is a BigInt and may be large, so we may not be able to process everything at once.
+        let numBytes = fileData.csize;
+
         // Read data
         let inputStream = new stream.PassThrough();
-        inputStream._read = () => {
-            // Note that "csize" is a BigInt and may be large, so we may not be able to process everything at once.
-            let numBytes = fileData.csize;
-
-            while(numBytes > MAX_BYTES_READ) {
-                numBytes -= MAX_BYTES_READ;
-                inputStream.push(this._readBytes(MAX_BYTES_READ));
-            }
-
-            // At this point, we know "numBytes" is small enough to safely convert into a Number.
-            inputStream.push(this._readBytes(Number(numBytes)));
-            inputStream.push(null);
+        inputStream._read = (n) => {
+            let numBytesToRead = numBytes < n ? Number(numBytes) : n;
+            numBytes -= BigInt(numBytesToRead);
+            inputStream.push(numBytesToRead > 0 ? this._readBytes(numBytesToRead) : null);
         };
 
         // Uncompress data with zlib
@@ -197,8 +192,8 @@ class UnzipStream {
         fileData.crc = this._readLong();
       
         // compressed size and uncompressed size
-        fileData.csize = this._readLong();
-        fileData.size = this._readLong();
+        fileData.csize = BigInt(this._readLong());
+        fileData.size = BigInt(this._readLong());
       
         // name length
         let nameLength = this._readShort();
