@@ -1,4 +1,5 @@
 const fs = require("fs");
+const stream = require("stream");
 const zlib = require("zlib");
 
 const SIG_CFH = 0x02014b50;
@@ -83,7 +84,7 @@ class UnzipStream {
         this.openFile(centralFileHeaderOffset);
 
         while(this._readLong() === SIG_CFH) {
-            let fileData = {};
+            let fileData = { uncompressedFileContent: Buffer.alloc(0) };
 
             this._processCentralFileHeader(fileData);
 
@@ -145,35 +146,37 @@ class UnzipStream {
         this._readBytes(extraLength);
     }
 
-    _processLocalFileContent(fileData) {
-        // Decompress the file content.
-        return new Promise((resolve) => {
-            fileData.uncompressedFileContent = Buffer.alloc(0);
+    async _processLocalFileContent(fileData) {
+        // Create the stream pipeline that will stream compressed data into a zlib decompressor.
 
-            let decompressStream = zlib.createInflateRaw();
-            decompressStream.on("data", (chunk) => {
-                if(chunk) {
-                    fileData.uncompressedFileContent = Buffer.concat([fileData.uncompressedFileContent, chunk]);
-                }
-            });
-
-            decompressStream.on("end", () => {
-                resolve();
-            });
-
+        // Read data
+        let inputStream = new stream.PassThrough();
+        inputStream._read = () => {
             // Note that "csize" is a BigInt and may be large, so we may not be able to process everything at once.
             let numBytes = fileData.csize;
 
             while(numBytes > MAX_BYTES_READ) {
                 numBytes -= MAX_BYTES_READ;
-                decompressStream.write(this._readBytes(MAX_BYTES_READ));
+                inputStream.push(this._readBytes(MAX_BYTES_READ));
             }
 
             // At this point, we know "numBytes" is small enough to safely convert into a Number.
-            decompressStream.write(this._readBytes(Number(numBytes)));
+            inputStream.push(this._readBytes(Number(numBytes)));
+            inputStream.push(null);
+        };
 
-            decompressStream.end();
+        // Uncompress data with zlib
+        let decompressStream = zlib.createInflateRaw();
+
+        // Intercept uncompressed data
+        let uncompressedPassThroughStream = new stream.PassThrough();
+        uncompressedPassThroughStream.on("data", (chunk) => {
+            if(chunk) {
+                fileData.uncompressedFileContent = Buffer.concat([fileData.uncompressedFileContent, chunk]);
+            }
         });
+
+        await stream.promises.pipeline(inputStream, decompressStream, uncompressedPassThroughStream);
     }
 
     _processCentralFileHeader(fileData) {
