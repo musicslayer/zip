@@ -1,11 +1,8 @@
 const fs = require("fs");
 const zlib = require("zlib");
 
-const SIG_LFH = 0x04034b50; // [80, 75, 3, 4]
-const SIG_DD = 0x08074b50; // [80, 75, 7, 8]
-const SIG_CFH = 0x02014b50; // [80, 75, 1, 2]
-const SIG_EOCD = 0x06054b50; // [80, 75, 5, 6]
-const SIG_ZIP64_EOCD = 0x06064b50; // [80, 75, 6, 6]
+const SIG_CFH = 0x02014b50;
+const SIG_CFH_BYTES = [80, 75, 1, 2];
 
 const ZIP64_EXTRA_ID = 0x0001;
 
@@ -40,6 +37,39 @@ class UnzipStream {
 		return buffer.subarray(0, numBytes);
     }
 
+    searchData(data) {
+        // Returns the offset of "data" in the file.
+        let offset;
+
+        let searchBytes = Buffer.from(data);
+        let searchBoundaryLength = searchBytes.length - 1;
+        let currentOffset = 0n;
+        
+        this.openFile(0n);
+
+        while(true) {
+            let fileData = this.readData();
+            let numBytesRead = fileData.length;
+            let numNewBytesRead = numBytesRead - searchBoundaryLength;
+            if(numNewBytesRead === 0) {
+                offset = -1;
+                break;
+            }
+
+            let index = fileData.indexOf(searchBytes);
+            if(index !== -1) {
+                offset = currentOffset + BigInt(index);
+                break;
+            }
+
+            // To find values across read boundaries, we will read the ending bytes again with the next data.
+            currentOffset += BigInt(numNewBytesRead);
+        }
+
+        this.closeFile();
+        return offset;
+    }
+
     async extractFiles() {
         // Read Central Directory entries to get file information, then read Local File entries to get file content.
         this.readCentralDirectoryEntries();
@@ -47,43 +77,24 @@ class UnzipStream {
     }
 
     readCentralDirectoryEntries() {
-        this.openFile(0n);
+        // Jump to the first Central File header.
+        let centralFileHeaderOffset = this.searchData(SIG_CFH_BYTES);
+        this.openFile(centralFileHeaderOffset);
 
-        // Skip all the Local File entries.
-        this._searchLong(SIG_CFH);
+        while(this._readLong() === SIG_CFH) {
+            let fileData = {};
 
-        let done = false;
-        while(!done) {
-            let signature = this._readLong();
-            switch(signature) {
-                case SIG_CFH:
-                    let fileData = {};
+            this._processCentralFileHeader(fileData);
 
-                    this._processCentralFileHeader(fileData);
-
-                    let zip64Record = getZip64ExtraRecord(fileData.extra)
-                    if(zip64Record) {
-                        // Use the values in the Zip64 record instead of the Central Directory.
-                        fileData.size = getEightValue(zip64Record.subarray(0, 8));
-                        fileData.csize = getEightValue(zip64Record.subarray(8, 16));
-                        fileData.fileOffset = getEightValue(zip64Record.subarray(16, 24));
-                    }
-
-                    this.fileDataMap.set(fileData.name, fileData);
-
-                    break;
-
-                case SIG_EOCD:
-                    done = true;
-                    break;
-
-                case SIG_ZIP64_EOCD:
-                    done = true;
-                    break;
-
-                default:
-                    throw("Invalid signature: " + signature);
+            let zip64Record = getZip64ExtraRecord(fileData.extra)
+            if(zip64Record) {
+                // Use the values in the Zip64 record instead of the Central Directory.
+                fileData.size = getEightValue(zip64Record.subarray(0, 8));
+                fileData.csize = getEightValue(zip64Record.subarray(8, 16));
+                fileData.fileOffset = getEightValue(zip64Record.subarray(16, 24));
             }
+
+            this.fileDataMap.set(fileData.name, fileData);
         }
 
         this.closeFile();
@@ -94,7 +105,7 @@ class UnzipStream {
             // For each "fileData" in the map, jump to its position in the zip file and look for the File Contents.
             this.openFile(fileData.fileOffset);
 
-            this._processLocalFileHeader(fileData);
+            this._processLocalFileHeader();
             await this._processLocalFileContent(fileData);
 
             this.closeFile();
@@ -226,11 +237,6 @@ class UnzipStream {
         return getLongValue(bytes);
     };
 
-    _readEight() {
-        let bytes = this._readBytes(8);
-        return getEightValue(bytes);
-    };
-
     _readString(strLength) {
         let bytes = this._readBytes(strLength);
         return getStringValue(bytes);
@@ -256,18 +262,6 @@ class UnzipStream {
 
         let bytes = this.zipFileContent.subarray(0, n);
         return bytes;
-    };
-
-    _searchLong(v) {
-        // Consume bytes from zipFileContent, stopping when the value "v" is found or there is no more data left.
-        while(this._peekLong() !== v) {
-            this._readBytes(1)
-        }
-    }
-
-    _peekLong() {
-        let bytes = this._peekBytes(4);
-        return getLongValue(bytes);
     };
 }
 
