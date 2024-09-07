@@ -1,8 +1,8 @@
 {
-  "name": "zip",
+  "name": "@musicslayer/zip",
   "version": "1.0.0",
   "description": "Quick and easy nodejs functions to work with zip files.",
-  "main": "example.js",
+  "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
