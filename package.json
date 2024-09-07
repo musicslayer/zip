@@ -1,0 +1,24 @@
+{
+  "name": "zip",
+  "version": "1.0.0",
+  "description": "Quick and easy nodejs functions to work with zip files.",
+  "main": "example.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/musicslayer/zip.git"
+  },
+  "keywords": [
+    "zip",
+    "unzip",
+    "compression"
+  ],
+  "author": "musicslayer",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/musicslayer/zip/issues"
+  },
+  "homepage": "https://github.com/musicslayer/zip#readme"
+}
