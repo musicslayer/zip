@@ -10,6 +10,9 @@ https://github.com/brianloveswords/buffer-crc32
 ## Installation Instructions
 npm install @musicslayer/zip
 
+## Example Usage
+Refer to example.js to see an example usage of each function in the API.
+
 ## API
 > Zip.createZipFileFromFolder(zipFilePath, srcFolder, compressionLevel)
 
@@ -27,28 +30,3 @@ Extracts a zip file, writing all of its contents into a specified folder.
 > Unzip.readZipFile(zipFilePath)
 
 Reads data from a zip file, returning a Map of file names to each file's information and uncompressed contents. This will not extract any files.
-
-
-## Example Usage
-Refer to example.js to see an example usage of each provided function:
-```
-const path = require("path");
-const {Zip, Unzip} = require("@musicslayer/zip");
-
-const ZIP_FILE_PATH = path.resolve(path.join(__dirname, "example_zip_files", "archive.zip"));
-const ZIP_SOURCE_FOLDER = path.resolve(path.join(__dirname, "example_zip_files", "files"));
-const ZIP_DEST_FOLDER = path.resolve(path.join(__dirname, "example_zip_files", "extract"));
-
-async function init() {
-    // Create Zip
-    await Zip.createZipFileFromFolder(ZIP_FILE_PATH, ZIP_SOURCE_FOLDER, 9);
-
-    // Extract zip file contents into a new folder.
-    await Unzip.extractZipFileIntoFolder(ZIP_FILE_PATH, ZIP_DEST_FOLDER);
-
-    // Read zip file contents, but do not extract any files.
-    let fileDataMap = await Unzip.readZipFile(ZIP_FILE_PATH);
-    console.log(fileDataMap);
-}
-init();
-```
