@@ -8,7 +8,9 @@ https://github.com/archiverjs/node-compress-commons
 https://github.com/brianloveswords/buffer-crc32
 
 ## Installation Instructions
-npm install @musicslayer/zip
+Package available on [NPM](https://www.npmjs.com/package/@musicslayer/zip).
+
+`> npm install @musicslayer/zip`
 
 ## Example Usage
 Refer to example.js to see an example usage of each function in the API.
