@@ -9,6 +9,10 @@ async function init() {
     // Create Zip
     await Zip.createZipFileFromFolder(ZIP_FILE_PATH, ZIP_SOURCE_FOLDER, 9);
 
+    // Compute Zip, but do not create any files.
+    let compressedFileContent = await Zip.computeZipFile(ZIP_SOURCE_FOLDER, 9);
+    console.log(compressedFileContent);
+
     // Extract zip file contents into a new folder.
     await Unzip.extractZipFileIntoFolder(ZIP_FILE_PATH, ZIP_DEST_FOLDER);
 

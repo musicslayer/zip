@@ -22,17 +22,17 @@ const METHOD_DEFLATED = 8;
 const GENERAL_BIT_FLAG = 8;
 
 class ZipStream {
+    compressedFileContent = Buffer.alloc(0);
+
     fileDataArray = [];
     offset = 0n;
 
-    outputFD;
     basePath;
     baseFolder;
     compressionLevel;
     archiveComment;
 
-    constructor(zipFilePath, basePath, compressionLevel) {
-        this.outputFD = fs.openSync(zipFilePath, "w");
+    constructor(basePath, compressionLevel) {
         this.basePath = basePath;
         this.baseFolder = this.basePath.split(path.sep).slice(-1)[0];
         this.compressionLevel = compressionLevel;
@@ -45,7 +45,7 @@ class ZipStream {
         if(chunk) {
             chunk = Buffer.from(chunk);
             this.offset += BigInt(chunk.length);
-            fs.writeSync(this.outputFD, chunk);
+            this.compressedFileContent = Buffer.concat([this.compressedFileContent, chunk]);
         }
     }
 
@@ -115,8 +115,6 @@ class ZipStream {
         else {
             this._writeCentralDirectoryEnd(Number(records), Number(centralLength), Number(centralOffset));
         }
-
-        fs.closeSync(this.outputFD);
     }
 
     _writeLocalFileHeader(fileData) {

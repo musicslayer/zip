@@ -12,7 +12,7 @@ class Unzip {
     }
 
     static async readZipFile(zipFilePath) {
-        // Return a map with the uncompressed file information.
+        // Return a map with the uncompressed file information. This will not extract any files.
         let unzipStream = new UnzipStream(zipFilePath);
         await unzipStream.extractFiles();
         return unzipStream.fileDataMap;
