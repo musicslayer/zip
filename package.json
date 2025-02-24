@@ -1,6 +1,6 @@
 {
   "name": "@musicslayer/zip",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Quick and easy nodejs functions to work with zip files.",
   "main": "index.js",
   "scripts": {
